@@ -11,56 +11,89 @@ contract Waitlist is Ownable {
      * State variables
      */
 
-    /// @dev FIFO queue that manages addresses
+    /// @dev primary FIFO queue that manages addresses
     FifoAddressQueue private primaryAddressQueue;
+
+    /// @dev addresses that pay a fee enter this queue
+    FifoAddressQueue private preferredAddressQueue;
+
+    /// @dev the base fee (in wei) needed to enter either queue
+    uint public baseFee;
+
+    /// @dev wei / person needed to cut the line needed to enter the preferred queue
+    uint public preferredRate;
+
+    /// @dev mapping of address to wei representing the amount of ether that can be withdrawn
+    mapping (address => uint) pendingWithdrawals;
+
 
     /*
      * Modifiers
      */
 
-    /// @dev Requires msg sender to match a target address
-    modifier targetAuthorized(address target) {
-        require(msg.sender == target);
+    /// @dev Requires target address to not be in the queue
+    modifier targetNotInWaitlist(address target) {
+        require(!primaryAddressQueue.exists(target) && !preferredAddressQueue.exists(target));
         _;
     }
 
-    /// @dev Requires target address to not be in the queue
-    modifier targetNotInWaitlist(address target) {
-        require(!primaryAddressQueue.exists(target));
+    modifier valueMeetsFee(uint fee) {
+        require(msg.value >= fee);
         _;
     }
+
+    /*
+     * Queue codes
+     */
+
+    uint constant UNKNOWN_QUEUE_CODE = 0;
+    uint constant PRIMARY_QUEUE_CODE = 1;
+    uint constant PREFERRED_QUEUE_CODE = 2;
 
     /*
      * Events
      */
 
-    event JoinSuccessful(address indexed waiter);
-    event JoinError(address indexed waiter);
-    event RemoveSuccessful(address indexed waiter);
+    event JoinSuccessful(address indexed waiter, uint indexed queueCode);
+    event JoinError(address indexed waiter, uint indexed queueCode);
+    event RemoveSuccessful(address indexed waiter, uint queueCode);
 
     /*
      * Public functions
      */
 
     /// @dev Constructor
-    function Waitlist()
+    function Waitlist(uint _baseFee, uint _preferredRate)
     {
+        baseFee = _baseFee;
+        preferredRate = _preferredRate;
         primaryAddressQueue = new FifoAddressQueue();
+        preferredAddressQueue = new FifoAddressQueue();
+    }
+
+    /// @dev Add sender's address to the primary queue
+    /// @return Successful join
+    function joinPrimaryQueue()
+        payable
+        returns(bool success)
+    {
+        return internalJoin(primaryAddressQueue, baseFee);
     }
 
     /// @dev Add sender's address to the waitlist
     /// @return Successful join
-    function join()
-        targetNotInWaitlist(msg.sender)
+    function joinPreferredQueue()
+        payable
         returns(bool success)
     {
-        bool result = primaryAddressQueue.add(msg.sender);
-        if (result) {
-            JoinSuccessful(msg.sender);
-        } else {
-            JoinError(msg.sender);
+        success = internalJoin(preferredAddressQueue, preferredFee());
+        if (success) {
+            for (uint i = 0; i < primaryAddressQueue.length(); i++) {
+                address waiter = primaryAddressQueue.elementAtIndex(i);
+                uint currentWithdrawal = pendingWithdrawals[waiter];
+                pendingWithdrawals[waiter] = currentWithdrawal + preferredRate;
+            }
         }
-        return result;
     }
 
     /// @dev Remove address at the front of the waitlist
@@ -69,9 +102,22 @@ contract Waitlist is Ownable {
         onlyOwner
         returns(address waiter)
     {
-        address frontOfLine = primaryAddressQueue.remove();
-        RemoveSuccessful(frontOfLine);
+        bool preferredAddressQueueEmpty = preferredAddressQueue.isEmpty();
+        FifoAddressQueue queue = preferredAddressQueueEmpty ? primaryAddressQueue : preferredAddressQueue;
+        uint queueCode = preferredAddressQueueEmpty ? PRIMARY_QUEUE_CODE : PREFERRED_QUEUE_CODE;
+        address frontOfLine = queue.remove();
+        RemoveSuccessful(frontOfLine, queueCode);
         return frontOfLine;
+    }
+
+    /// @dev Payout the amount msg.sender as accrued
+    function withdrawFunds()
+    {
+        uint amount = pendingWithdrawals[msg.sender];
+        // Remember to zero the pending refund before
+        // sending to prevent re-entrancy attacks
+        pendingWithdrawals[msg.sender] = 0;
+        msg.sender.transfer(amount);
     }
 
     /*
@@ -84,17 +130,64 @@ contract Waitlist is Ownable {
         constant
         returns(uint length)
     {
-        return primaryAddressQueue.length();
+        return primaryAddressQueue.length() + preferredAddressQueue.length();
     }
 
     /// @dev Place in line of the provided address, 0-indexed
-    /// @param waiter Address to query
     /// @return index of the address
-    function placeInLine(address waiter)
+    function placeInLine()
         constant
-        targetAuthorized(waiter)
         returns(uint index)
     {
-        return primaryAddressQueue.indexOf(waiter);
+        if (preferredAddressQueue.exists(msg.sender)) {
+            return preferredAddressQueue.indexOf(msg.sender);
+        } else {
+            return preferredAddressQueue.length() + primaryAddressQueue.indexOf(msg.sender);
+        }
+
+    }
+
+    function preferredFee()
+        constant
+        returns(uint fee)
+    {
+        return baseFee + (preferredRate * primaryAddressQueue.length());
+    }
+
+    /*
+     * Private functions
+     */
+
+    function internalJoin(FifoAddressQueue queue, uint fee)
+        private
+        valueMeetsFee(fee)
+        targetNotInWaitlist(msg.sender)
+        returns(bool success)
+    {
+        success = queue.add(msg.sender);
+        uint queueCode = queueCodeFromQueue(queue);
+        if (success) {
+            if (msg.value > fee) {
+                msg.sender.transfer(msg.value - fee); // should this be part of withdrawals?
+            }
+            JoinSuccessful(msg.sender, queueCode);
+        } else {
+            msg.sender.transfer(msg.value); // should this be part of withdrawals?
+            JoinError(msg.sender, queueCode);
+        }
+    }
+
+    function queueCodeFromQueue(FifoAddressQueue queue)
+        private
+        returns(uint code)
+    {
+        // need to check for empty addresses?
+        if (queue == primaryAddressQueue) {
+            return PRIMARY_QUEUE_CODE;
+        } else if (queue == preferredAddressQueue) {
+            return PREFERRED_QUEUE_CODE;
+        } else {
+            return UNKNOWN_QUEUE_CODE;
+        }
     }
 }

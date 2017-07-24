@@ -80,6 +80,18 @@ contract FifoAddressQueue {
         return (queue[cursorPosition]);
     }
 
+    /// @dev Returns the element at the end of the queue without removing it
+    /// @return Address at the end of the queue
+    function last()
+        constant
+        notEmpty
+        validCursor
+        returns(address lastElement)
+    {
+        uint index = queue.length - 1;
+        return (queue[index]);
+    }
+
     /// @dev Returns the length of the "active" area of the queue
     /// @return Length of the queue
     function length()
@@ -96,7 +108,6 @@ contract FifoAddressQueue {
     function indexOf(address element)
         constant
         notEmpty
-        validCursor
         returns(uint index)
     {
         var (possibleIndex, validIndex) = internalIndexOf(element);
@@ -109,23 +120,32 @@ contract FifoAddressQueue {
     /// @return Index of element
     function exists(address element)
         constant
-        validCursor
         returns(bool exists)
     {
         var (possibleIndex, validIndex) = internalIndexOf(element);
         return validIndex;
     }
 
-    /// @dev Returns the element at the end of the queue without removing it
-    /// @return Address at the end of the queue
-    function last()
+    /// @dev Returns address at a given index
+    /// @param index Index of the address
+    /// @return Address at index
+    function elementAtIndex(uint index)
         constant
         notEmpty
-        validCursor
-        returns(address lastElement)
+        returns(address element)
     {
-        uint index = queue.length - 1;
-        return (queue[index]);
+        uint adjustedIndex = cursorPosition + index;
+        assert((adjustedIndex >= cursorPosition) && (adjustedIndex < queue.length));
+        return queue[adjustedIndex];
+    }
+
+    /// @dev Returns true if active area of the queue is empty
+    /// @return Empty
+    function isEmpty()
+        constant
+        returns(bool isEmpty)
+    {
+        return (length() == 0);
     }
 
     /*
@@ -137,6 +157,7 @@ contract FifoAddressQueue {
     function internalIndexOf(address element)
         private
         constant
+        validCursor
         returns(uint index, bool validIndex)
     {
         index = addressIndex[element] - cursorPosition - 1;

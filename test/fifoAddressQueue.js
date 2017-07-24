@@ -52,6 +52,14 @@ contract('FifoAddressQueue', (accounts) => {
       });
     });
 
+    describe("#last", () => {
+      it("should throw", () => {
+        return queue.last()
+          .then(() => assert.fail("Expected error to be thrown"))
+          .catch((error) => assert.include(error.message, "VM Exception while executing eth_call"));
+      });
+    });
+
     describe("#length", () => {
       it("should be zero", () => {
         return queue.length()
@@ -77,15 +85,21 @@ contract('FifoAddressQueue', (accounts) => {
       });
     });
 
-    describe("#last", () => {
+    describe("#elementAtIndex", () => {
       it("should throw", () => {
-        return queue.last()
+        return queue.elementAtIndex(0)
           .then(() => assert.fail("Expected error to be thrown"))
           .catch((error) => assert.include(error.message, "VM Exception while executing eth_call"));
       });
     });
-  });
 
+    describe("#isEmpty", () => {
+      it("should be true", () => {
+        return queue.isEmpty()
+          .then((isEmpty) => assert(isEmpty));
+      });
+    });
+  });
 
   describe("for a partially filled queue", () => {
     let queueLength;
@@ -159,6 +173,13 @@ contract('FifoAddressQueue', (accounts) => {
       });
     });
 
+    describe("#last", () => {
+      it("should equal the last address", () => {
+        return queue.last()
+          .then((address) => assert.equal(address, accounts[3]));
+      });
+    });
+
     describe("#length", () => {
       it("should equal the number of elements added", () => assert.equal(queueLength, 4));
     });
@@ -194,10 +215,26 @@ contract('FifoAddressQueue', (accounts) => {
       });
     });
 
-    describe("#last", () => {
-      it("should equal the last address", () => {
-        return queue.last()
-          .then((address) => assert.equal(address, accounts[3]));
+    describe("#elementAtIndex", () => {
+      it("should correctly return element at index", () => {
+        let calls = addedAccounts.map((address, index) => queue.elementAtIndex(index));
+        return Promise.all(calls)
+          .then((results) => {
+            results.forEach((result, index) => assert.equal(result, addedAccounts[index]));
+          });
+      });
+
+      it("should throw for out of bounds index", () => {
+        return queue.elementAtIndex(7)
+          .then(() => assert.fail("Expected error to be thrown"))
+          .catch((error) => assert.include(error.message, "VM Exception while executing eth_call"));
+      });
+    });
+
+    describe("#isEmpty", () => {
+      it("should return false", () => {
+        return queue.isEmpty()
+          .then((isEmpty) => assert(!isEmpty));
       });
     });
   });
